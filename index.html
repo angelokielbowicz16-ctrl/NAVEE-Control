@@ -91,7 +91,10 @@ throw new Error("Web Bluetooth nicht verfügbar");
 document.getElementById("connectionInfo").textContent="Suche...";
 device=await navigator.bluetooth.requestDevice({
 acceptAllDevices:true,
-optionalServices:["battery_service"]
+optionalServices:[
+    "battery_service",
+    "0000d0ff-3c17-d293-8e48-14fe2e4da212"
+]
 });
 
 document.getElementById("deviceName").textContent=device.name||"NAVEE";
