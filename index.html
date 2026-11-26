@@ -116,7 +116,61 @@ document.getElementById("connectionInfo").textContent=e.message;
 }
 }
 
+
 async function discoverServices(){
+  const log = document.getElementById("debug");
+  log.textContent = "Suche BLE-Dienste...";
+
+  try {
+    const services = await server.getPrimaryServices();
+    let output = "";
+
+    for (const service of services) {
+      output += "\nSERVICE: " + service.uuid;
+
+      const chars = await service.getCharacteristics();
+
+      for (const c of chars) {
+        output += "\nCHAR: " + c.uuid;
+
+        if (c.properties.notify) {
+          output += " [NOTIFY]";
+
+          c.addEventListener("characteristicvaluechanged", event => {
+            const data = new Uint8Array(
+              event.target.value.buffer,
+              event.target.value.byteOffset,
+              event.target.value.byteLength
+            );
+
+            const hex = Array.from(data)
+              .map(b => b.toString(16).padStart(2,"0"))
+              .join(" ");
+
+            log.textContent += "\nRX: " + hex;
+          });
+
+          await c.startNotifications();
+          output += " -> EMPFANG AKTIV";
+        }
+
+        if (c.properties.read) {
+          output += " [READ]";
+        }
+
+        if (c.properties.write || c.properties.writeWithoutResponse) {
+          output += " [WRITE]";
+        }
+      }
+    }
+
+    log.textContent = output || "Keine Dienste gefunden.";
+
+  } catch(e) {
+    log.textContent = "BLE-Fehler: " + e.message;
+  }
+}
+
 try{
 let output="";
 let services=await server.getPrimaryServices();
