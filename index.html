@@ -25,9 +25,7 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 .fill{height:100%;width:0;background:#36e68b}
 button{width:100%;padding:17px;margin-top:12px;border:0;border-radius:14px;background:#1677ff;color:white;font-weight:800}
 button:disabled{opacity:.4}
-.lock{background:#bd7825}
-.unlock{background:#16885c}
-#debug{font-size:11px;color:#38bdf8;overflow-wrap:anywhere;line-height:1.8}
+#debug{font-size:11px;color:#38bdf8;overflow-wrap:anywhere;line-height:1.8;white-space:pre-wrap}
 </style>
 </head>
 <body>
@@ -68,139 +66,213 @@ button:disabled{opacity:.4}
 
 <div class="card">
 <div class="label">VEHICLE CONTROL</div>
-<button class="lock" disabled>🔒 LOCK – PROTOKOLL FEHLT</button>
-<button class="unlock" disabled>🔓 UNLOCK – PROTOKOLL FEHLT</button>
-<div class="muted">Steuerbefehle noch nicht eingerichtet.</div>
+<button disabled>🔒 LOCK – NOCH NICHT VERIFIZIERT</button>
+<button disabled>🔓 UNLOCK – NOCH NICHT VERIFIZIERT</button>
+<div class="muted">Steuerung bleibt deaktiviert, bis das GT3-Protokoll sicher bestätigt ist.</div>
 </div>
 
 <div class="card">
 <div class="label">BLE DIAGNOSTICS</div>
-<div id="debug">Noch keine Daten.</div>
+<div id="debug">Bereit.</div>
 </div>
 
 <script>
-let device=null;
-let server=null;
+"use strict";
 
-async function connectScooter(){
-try{
-if(!navigator.bluetooth){
-throw new Error("Web Bluetooth nicht verfügbar");
+const SERVICE_UUID =
+"0000d0ff-3c17-d293-8e48-14fe2e4da212";
+
+const RX_UUID =
+"0000b003-0000-1000-8000-00805f9b34fb";
+
+const TX_UUID =
+"0000b002-0000-1000-8000-00805f9b34fb";
+
+let device = null;
+let server = null;
+let rxCharacteristic = null;
+let txCharacteristic = null;
+
+const $ = id => document.getElementById(id);
+
+function log(message) {
+  $("debug").textContent += "\n" + message;
 }
 
-document.getElementById("connectionInfo").textContent="Suche...";
-device=await navigator.bluetooth.requestDevice({
-acceptAllDevices:true,
-optionalServices:[
-    "battery_service",
-    "0000d0ff-3c17-d293-8e48-14fe2e4da212"
-]
-});
-
-document.getElementById("deviceName").textContent=device.name||"NAVEE";
-server=await device.gatt.connect();
-
-document.getElementById("status").textContent="● CONNECTED";
-document.getElementById("status").style.color="#36e68b";
-document.getElementById("connectionInfo").textContent="Bluetooth verbunden";
-
-device.addEventListener("gattserverdisconnected",()=>{
-document.getElementById("status").textContent="● OFFLINE";
-document.getElementById("connectionInfo").textContent="Getrennt";
-});
-
-await discoverServices();
-
-}catch(e){
-document.getElementById("connectionInfo").textContent=e.message;
-}
+function setStatus(message, online = false) {
+  $("status").textContent = online ? "● CONNECTED" : "● OFFLINE";
+  $("status").style.color = online ? "#36e68b" : "#ff5252";
+  $("connectionInfo").textContent = message;
 }
 
+async function connectScooter() {
+  const button = $("connect");
 
-async function discoverServices(){
-  const log = document.getElementById("debug");
-  log.textContent = "Suche BLE-Dienste...";
+  if (!navigator.bluetooth) {
+    setStatus("Web Bluetooth wird nicht unterstützt.");
+    return;
+  }
+
+  button.disabled = true;
+  $("debug").textContent = "Starte Bluetooth-Suche...";
 
   try {
-    const services = await server.getPrimaryServices();
-    let output = "";
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: "NAVEE" }],
+      optionalServices: [
+        SERVICE_UUID,
+        "battery_service"
+      ]
+    });
 
-    for (const service of services) {
-      output += "\nSERVICE: " + service.uuid;
+    device.addEventListener(
+      "gattserverdisconnected",
+      onDisconnected
+    );
 
-      const chars = await service.getCharacteristics();
+    $("deviceName").textContent = device.name || "NAVEE";
+    $("connectionInfo").textContent = "Verbinde...";
 
-      for (const c of chars) {
-        output += "\nCHAR: " + c.uuid;
+    server = await device.gatt.connect();
 
-        if (c.properties.notify) {
-          output += " [NOTIFY]";
+    setStatus("Bluetooth verbunden", true);
+    log("GATT-Verbindung erfolgreich.");
 
-          c.addEventListener("characteristicvaluechanged", event => {
-            const data = new Uint8Array(
-              event.target.value.buffer,
-              event.target.value.byteOffset,
-              event.target.value.byteLength
-            );
+    await discoverServices();
 
-            const hex = Array.from(data)
-              .map(b => b.toString(16).padStart(2,"0"))
-              .join(" ");
+  } catch (error) {
+    log("FEHLER: " + error.name + ": " + error.message);
+    setStatus(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
 
-            log.textContent += "\nRX: " + hex;
-          });
+async function discoverServices() {
+  log("Suche NAVEE-Dienst...");
 
-          await c.startNotifications();
-          output += " -> EMPFANG AKTIV";
+  try {
+    const service = await server.getPrimaryService(SERVICE_UUID);
+
+    log("NAVEE SERVICE: " + service.uuid);
+
+    const characteristics =
+      await service.getCharacteristics();
+
+    for (const characteristic of characteristics) {
+      const uuid = characteristic.uuid;
+
+      log(
+        "CHAR: " + uuid +
+        " | READ: " + characteristic.properties.read +
+        " | NOTIFY: " + characteristic.properties.notify +
+        " | WRITE: " + characteristic.properties.write
+      );
+
+      if (uuid === RX_UUID) {
+        rxCharacteristic = characteristic;
+
+        if (characteristic.properties.notify) {
+          await characteristic.startNotifications();
+
+          characteristic.addEventListener(
+            "characteristicvaluechanged",
+            handleNotification
+          );
+
+          log("Empfang B003 aktiviert.");
         }
+      }
 
-        if (c.properties.read) {
-          output += " [READ]";
-        }
+      if (uuid === TX_UUID) {
+        txCharacteristic = characteristic;
+        log("Sende-Characteristic B002 erkannt.");
+      }
 
-        if (c.properties.write || c.properties.writeWithoutResponse) {
-          output += " [WRITE]";
+      if (characteristic.properties.read) {
+        try {
+          const data = await characteristic.readValue();
+          log("READ " + uuid + ": " + toHex(data));
+        } catch (error) {
+          log("READ FEHLER: " + error.message);
         }
       }
     }
 
-    log.textContent = output || "Keine Dienste gefunden.";
+    if (!rxCharacteristic) {
+      log("B003 nicht gefunden.");
+    }
 
-  } catch(e) {
-    log.textContent = "BLE-Fehler: " + e.message;
+    if (!txCharacteristic) {
+      log("B002 nicht gefunden.");
+    }
+
+    await readBatteryService();
+
+  } catch (error) {
+    log("GATT-DIAGNOSE: " + error.message);
   }
 }
 
-try{
-let output="";
-let services=await server.getPrimaryServices();
+async function readBatteryService() {
+  try {
+    const service =
+      await server.getPrimaryService("battery_service");
 
-for(const service of services){
-output+="<br>Service: "+service.uuid;
-let chars=await service.getCharacteristics();
+    const characteristic =
+      await service.getCharacteristic("battery_level");
 
-for(const c of chars){
-output+="<br>Characteristic: "+c.uuid;
-output+=" ["+Object.keys(c.properties).filter(k=>c.properties[k]).join(", ")+"]";
+    const data = await characteristic.readValue();
+    const level = data.getUint8(0);
 
-if(c.properties.read){
-try{
-let data=await c.readValue();
-let bytes=Array.from(new Uint8Array(data.buffer,data.byteOffset,data.byteLength));
-output+="<br>DATA: "+bytes.map(x=>x.toString(16).padStart(2,"0")).join(" ");
-}catch(e){}
-}
-}
-}
-document.getElementById("debug").innerHTML=output||"Keine Services gefunden";
-}catch(e){
-document.getElementById("debug").textContent=e.message;
-}
+    $("battery").textContent = level;
+    $("batteryFill").style.width = level + "%";
+
+    log("Standard-Batteriedienst: " + level + "%");
+
+  } catch (error) {
+    log("Kein lesbarer Standard-Batteriedienst.");
+  }
 }
 
-function disconnectScooter(){
-if(device&&device.gatt.connected)device.gatt.disconnect();
+function handleNotification(event) {
+  const data = event.target.value;
+
+  log("NAVEE RX: " + toHex(data));
+
+  // Rohdaten werden protokolliert.
+  // Erst nach bestätigter Protokollauswertung
+  // werden daraus Geschwindigkeit, Akku und Watt.
+}
+
+function toHex(data) {
+  return Array.from(
+    new Uint8Array(
+      data.buffer,
+      data.byteOffset,
+      data.byteLength
+    )
+  ).map(byte =>
+    byte.toString(16).padStart(2, "0")
+  ).join(" ");
+}
+
+function onDisconnected() {
+  server = null;
+  rxCharacteristic = null;
+  txCharacteristic = null;
+
+  setStatus("Bluetooth getrennt");
+  $("deviceName").textContent = "NAVEE GT3";
+  log("Verbindung getrennt.");
+}
+
+function disconnectScooter() {
+  if (device && device.gatt.connected) {
+    device.gatt.disconnect();
+  }
 }
 </script>
+
 </body>
 </html>
