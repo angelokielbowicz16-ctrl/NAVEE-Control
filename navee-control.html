@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#090e18">
+<title>NAVEE Control</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#090e18;--panel:#121c2a;--panel2:#172437;
+  --line:#26364b;--muted:#91a0b5;--text:#f4f7fb;
+  --blue:#4b9cff;--green:#42dfa0;--orange:#ffb454;--red:#ff7474;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;padding:calc(18px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
+  background:radial-gradient(ellipse at 50% -15%,#182b45 0%,var(--bg) 48%);
+  color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+  max-width:680px;margin-inline:auto;min-height:100vh
+}
+header{display:flex;justify-content:space-between;align-items:center;margin:8px 2px 24px}
+.logo{font-size:27px;font-weight:900;letter-spacing:2px}
+.sub{font-size:10px;color:var(--muted);letter-spacing:2px;margin-top:4px}
+.pill{font-size:10px;font-weight:800;letter-spacing:.7px;padding:9px 11px;border-radius:30px;background:#302329;color:var(--red);border:1px solid #55313b}
+.pill.online{background:#123528;color:var(--green);border-color:#205b43}
+.card{background:linear-gradient(145deg,#152235,var(--panel));border:1px solid var(--line);border-radius:19px;padding:19px;margin-bottom:13px;box-shadow:0 10px 28px #0002}
+.hero{text-align:center;padding:24px 18px}
+.label{font-size:10px;letter-spacing:1.8px;color:var(--muted);font-weight:850}
+.speed{font-size:72px;font-weight:900;letter-spacing:-4px;margin:12px 0 0;line-height:1}
+.unit{font-size:14px;color:var(--muted);letter-spacing:0}
+.device{font-size:12px;color:var(--muted);margin-top:11px;overflow-wrap:anywhere}
+.section{font-size:10px;color:var(--muted);font-weight:900;letter-spacing:2px;margin:23px 3px 11px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.metric{min-height:112px}
+.value{font-size:25px;font-weight:850;margin-top:12px;overflow-wrap:anywhere}
+.green{color:var(--green)}.blue{color:var(--blue)}.orange{color:var(--orange)}
+.bar{height:7px;background:#29394d;border-radius:20px;overflow:hidden;margin-top:15px}
+.fill{height:100%;width:0;background:linear-gradient(90deg,#28bd83,#58edb0);border-radius:20px;transition:width .25s}
+button{width:100%;border:0;border-radius:13px;padding:15px 14px;margin-top:10px;background:var(--blue);color:#071322;font-size:12px;font-weight:900;letter-spacing:.5px}
+button.secondary{background:#25364c;color:#e8f0fa}
+button.danger{background:#40252c;color:#ffb4b4}
+button:disabled{opacity:.45}
+.note{font-size:11px;color:var(--muted);line-height:1.6;margin-top:12px}
+#debug{font:11px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;color:#8fd7ff;white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;background:#080f19;border:1px solid #223249;border-radius:12px;padding:12px;min-height:90px}
+.row{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.small{font-size:11px;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+@media(max-width:360px){body{padding-inline:12px}.speed{font-size:62px}.value{font-size:22px}}
+</style>
+</head>
+<body>
+<header>
+  <div><div class="logo">NAVEE.</div><div class="sub">CONTROL CENTER</div></div>
+  <div id="status" class="pill">● OFFLINE</div>
+</header>
+
+<section class="card hero">
+  <div class="label">LIVE SPEED</div>
+  <div class="speed"><span id="speed">--</span><span class="unit"> km/h</span></div>
+  <div class="device" id="deviceName">NAVEE GT3 · nicht verbunden</div>
+</section>
+
+<div class="section">FAHRZEUGDATEN</div>
+<section class="card">
+  <div class="row"><div class="label">BATTERIE</div><div class="small" id="batteryState">Warte auf Daten</div></div>
+  <div class="value green"><span id="battery">--</span><span>%</span></div>
+  <div class="bar"><div class="fill" id="batteryFill"></div></div>
+  <div class="note">Der Akkustand wird nur angezeigt, wenn der Scooter einen lesbaren Standard-Bluetooth-Akkudienst bereitstellt.</div>
+</section>
+<div class="grid">
+  <section class="card metric"><div class="label">LEISTUNG</div><div class="value blue"><span id="power">--</span> W</div></section>
+  <section class="card metric"><div class="label">REICHWEITE</div><div class="value"><span id="range">--</span> km</div></section>
+  <section class="card metric"><div class="label">GESAMTKILOMETER</div><div class="value" id="total">--</div></section>
+  <section class="card metric"><div class="label">SPANNUNG</div><div class="value orange" id="voltage">-- V</div></section>
+</div>
+
+<div class="section">BLUETOOTH</div>
+<section class="card">
+  <div class="label">BLE-VERBINDUNG</div>
+  <button id="connect" type="button">GERÄT SUCHEN & VERBINDEN</button>
+  <button id="disconnect" class="secondary" type="button" disabled>TRENNEN</button>
+  <div class="note" id="connectionInfo">Bereit. Bluefy benötigt eine HTTPS-Seite und Bluetooth-Zugriff.</div>
+</section>
+
+<div class="section">DIAGNOSE</div>
+<section class="card">
+  <div class="row"><div class="label">BLUETOOTH-LOG</div><div class="small" id="gattState">GATT: offline</div></div>
+  <hr>
+  <div id="debug" role="log" aria-live="polite">NAVEE Control bereit.
+Hinweis: Noch keine Verbindung aufgebaut.</div>
+  <button id="copy" class="secondary" type="button">LOG KOPIEREN</button>
+  <button id="clear" class="secondary" type="button">LOG LEEREN</button>
+  <div class="note">Dieses Dashboard liest verfügbare BLE-Informationen. Es sendet keine Fahr-, Gas-, Brems-, Sperr- oder Firmware-Befehle.</div>
+</section>
+
+<script>
+"use strict";
+
+/*
+ * Bluefy / Web Bluetooth:
+ * - Die Verbindung wird erst nach dem Tippen auf den Button angefordert.
+ * - Nur die unten freigegebenen Services können abgefragt werden.
+ * - Die NAVEE-GT3-Protokoll-UUIDs sind nicht verifiziert.
+ */
+
+const SERVICE_UUIDS = [
+  "0000d0ff-3c17-d293-8e48-14fe2e4da212",
+  "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
+  "0000fff0-0000-1000-8000-00805f9b34fb",
+  "0000ffe0-0000-1000-8000-00805f9b34fb",
+  "0000ffe5-0000-1000-8000-00805f9b34fb",
+  "0000fff1-0000-1000-8000-00805f9b34fb",
+  "0000ff00-0000-1000-8000-00805f9b34fb",
+  "0000ffd0-0000-1000-8000-00805f9b34fb",
+  "0000fe00-0000-1000-8000-00805f9b34fb",
+  "0000fd00-0000-1000-8000-00805f9b34fb",
+  "0000ae00-0000-1000-8000-00805f9b34fb",
+  "0000b000-0000-1000-8000-00805f9b34fb",
+  "0000a000-0000-1000-8000-00805f9b34fb",
+  "0000abf0-0000-1000-8000-00805f9b34fb",
+  "0000ff10-0000-1000-8000-00805f9b34fb",
+  "0000180a-0000-1000-8000-00805f9b34fb",
+  "0000180f-0000-1000-8000-00805f9b34fb",
+  "00001800-0000-1000-8000-00805f9b34fb",
+  "00001801-0000-1000-8000-00805f9b34fb"
+];
+
+const $ = id => document.getElementById(id);
+let device = null;
+let server = null;
+let connecting = false;
+let activeCharacteristics = [];
+
+function log(message) {
+  const box = $("debug");
+  const stamp = new Date().toLocaleTimeString("de-DE");
+  box.textContent += `\n[${stamp}] ${message}`;
+  box.scrollTop = box.scrollHeight;
+}
+
+function setStatus(message, connected = false) {
+  const pill = $("status");
+  pill.textContent = connected ? "● GATT VERBUNDEN" : "● OFFLINE";
+  pill.classList.toggle("online", connected);
+  $("connectionInfo").textContent = message;
+  $("gattState").textContent = connected ? "GATT: verbunden" : "GATT: offline";
+  $("disconnect").disabled = !connected;
+}
+
+function bytesToHex(dataView) {
+  return Array.from(new Uint8Array(
+    dataView.buffer, dataView.byteOffset, dataView.byteLength
+  )).map(byte => byte.toString(16).padStart(2, "0")).join(" ");
+}
+
+function onDisconnected() {
+  server = null;
+  activeCharacteristics = [];
+  setStatus("Bluetooth-Verbindung wurde getrennt.");
+  $("deviceName").textContent = "NAVEE GT3 · nicht verbunden";
+  log("GATT-Verbindung getrennt.");
+}
+
+async function connectScooter() {
+  if (connecting) return;
+  connecting = true;
+  $("connect").disabled = true;
+  $("debug").textContent = "Bluetooth-Diagnose gestartet.";
+
+  try {
+    if (!window.isSecureContext) {
+      throw new Error("Keine sichere HTTPS-Verbindung. GitHub Pages verwenden.");
+    }
+    if (!navigator.bluetooth || !navigator.bluetooth.requestDevice) {
+      throw new Error("Bluefy stellt Web Bluetooth hier nicht bereit. Bluefy-Einstellungen prüfen.");
+    }
+
+    if (device && device.gatt && device.gatt.connected) {
+      device.gatt.disconnect();
+    }
+    device = null;
+    server = null;
+    activeCharacteristics = [];
+
+    log("Öffne Bluetooth-Geräteauswahl …");
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: SERVICE_UUIDS
+    });
+
+    $("deviceName").textContent = (device.name || "Unbenanntes BLE-Gerät") + " · ausgewählt";
+    log("Gerät ausgewählt: " + (device.name || "(kein Gerätename)"));
+    log("Geräte-ID: " + device.id);
+
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+
+    if (!device.gatt) {
+      throw new Error("Das ausgewählte Gerät unterstützt keine GATT-Verbindung.");
+    }
+
+    log("Verbinde mit GATT-Server …");
+    setStatus("Gerät ausgewählt – GATT-Verbindung wird aufgebaut …");
+
+    server = await device.gatt.connect();
+
+    if (!server || !server.connected) {
+      throw new Error("GATT-Server meldet keine aktive Verbindung.");
+    }
+
+    log("GATT-Verbindung erfolgreich.");
+    setStatus("GATT verbunden. Suche Services …", true);
+    await discoverServices();
+
+  } catch (error) {
+    log("FEHLER: " + (error.name || "Error") + " – " + error.message);
+    setStatus("Verbindung fehlgeschlagen: " + error.message, false);
+    if (device && device.gatt && device.gatt.connected) {
+      try { device.gatt.disconnect(); } catch (_) {}
+    }
+    server = null;
+  } finally {
+    connecting = false;
+    $("connect").disabled = false;
+  }
+}
+
+async function discoverServices() {
+  if (!server || !server.connected) {
+    throw new Error("GATT-Verbindung ging vor der Service-Suche verloren.");
+  }
+
+  log("Rufe freigegebene Primary Services ab …");
+  let services;
+
+  try {
+    services = await server.getPrimaryServices();
+  } catch (error) {
+    throw new Error("Services konnten nicht gelesen werden: " + error.message);
+  }
+
+  log("Anzahl gefundener Services: " + services.length);
+
+  if (services.length === 0) {
+    log("Keine freigegebenen Services gefunden.");
+    log("Die verwendeten UUIDs passen möglicherweise nicht zum GT3.");
+    setStatus("GATT verbunden, aber keine passenden Services gefunden.", true);
+    return;
+  }
+
+  for (const service of services) {
+    log("SERVICE " + service.uuid);
+
+    let characteristics;
+    try {
+      characteristics = await service.getCharacteristics();
+    } catch (error) {
+      log("Characteristics konnten nicht gelesen werden: " + error.message);
+      continue;
+    }
+
+    log("  Characteristics: " + characteristics.length);
+
+    for (const characteristic of characteristics) {
+      const p = characteristic.properties;
+      const flags = [
+        p.read ? "READ" : "",
+        p.write ? "WRITE" : "",
+        p.writeWithoutResponse ? "WRITE_NO_RESPONSE" : "",
+        p.notify ? "NOTIFY" : "",
+        p.indicate ? "INDICATE" : ""
+      ].filter(Boolean).join(", ") || "keine bekannten Eigenschaften";
+
+      log("  CHAR " + characteristic.uuid + " [" + flags + "]");
+
+      if (p.read) {
+        try {
+          const value = await characteristic.readValue();
+          log("    READ: " + bytesToHex(value));
+        } catch (error) {
+          log("    READ-Fehler: " + error.message);
+        }
+      }
+
+      if (p.notify || p.indicate) {
+        try {
+          characteristic.addEventListener("characteristicvaluechanged", event => {
+            log("    RX " + characteristic.uuid + ": " + bytesToHex(event.target.value));
+          });
+          await characteristic.startNotifications();
+          activeCharacteristics.push(characteristic);
+          log("    Notifications aktiviert.");
+        } catch (error) {
+          log("    Notify-Fehler: " + error.message);
+        }
+      }
+    }
+  }
+
+  await readStandardBattery();
+  if (server && server.connected) {
+    setStatus("GATT verbunden – Service-Diagnose abgeschlossen.", true);
+    log("Diagnose abgeschlossen. Es wurden keine Steuerbefehle gesendet.");
+  }
+}
+
+async function readStandardBattery() {
+  if (!server || !server.connected) return;
+
+  try {
+    const service = await server.getPrimaryService("battery_service");
+    const characteristic = await service.getCharacteristic("battery_level");
+    const value = await characteristic.readValue();
+    const level = value.getUint8(0);
+
+    $("battery").textContent = level;
+    $("batteryFill").style.width = Math.max(0, Math.min(100, level)) + "%";
+    $("batteryState").textContent = "Standard-Akkudienst erkannt";
+    log("Standard-Batteriedienst: " + level + "%");
+  } catch (error) {
+    $("batteryState").textContent = "Nicht verfügbar";
+    log("Standard-Batteriedienst nicht verfügbar: " + error.message);
+  }
+}
+
+function disconnectScooter() {
+  if (device && device.gatt && device.gatt.connected) {
+    device.gatt.disconnect();
+  } else {
+    setStatus("Es besteht keine aktive GATT-Verbindung.", false);
+    log("Trennen angefordert, aber keine aktive Verbindung vorhanden.");
+  }
+}
+
+async function copyLog() {
+  const content = $("debug").textContent;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(content);
+    } else {
+      const area = document.createElement("textarea");
+      area.value = content;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    log("Log in Zwischenablage kopiert.");
+  } catch (error) {
+    log("Kopieren fehlgeschlagen: " + error.message);
+  }
+}
+
+$("connect").addEventListener("click", connectScooter);
+$("disconnect").addEventListener("click", disconnectScooter);
+$("copy").addEventListener("click", copyLog);
+$("clear").addEventListener("click", () => {
+  $("debug").textContent = "Log geleert.";
+});
+
+if (!window.isSecureContext) {
+  log("WARNUNG: Seite läuft nicht in einem sicheren Kontext (HTTPS).");
+}
+if (!navigator.bluetooth) {
+  log("WARNUNG: Web Bluetooth API wurde nicht erkannt. Bluefy-Unterstützung prüfen.");
+}
+</script>
+</body>
+</html>
