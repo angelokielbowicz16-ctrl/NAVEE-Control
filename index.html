@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -25,7 +24,7 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 .fill{height:100%;width:0;background:#36e68b}
 button{width:100%;padding:17px;margin-top:12px;border:0;border-radius:14px;background:#1677ff;color:white;font-weight:800}
 button:disabled{opacity:.4}
-#debug{font-size:11px;color:#38bdf8;overflow-wrap:anywhere;line-height:1.8;white-space:pre-wrap}
+#debug{font-size:11px;color:#38bdf8;overflow-wrap:anywhere;line-height:1.8;white-space:pre-wrap;max-height:320px;overflow-y:auto}
 </style>
 </head>
 <body>
@@ -59,7 +58,7 @@ button:disabled{opacity:.4}
 
 <div class="card">
 <div class="label">BLUETOOTH</div>
-<button id="connect" onclick="connectScooter()">CONNECT NAVEE GT3</button>
+<button id="connect" onclick="connectScooter()">GERÄT SUCHEN &amp; VERBINDEN</button>
 <button onclick="disconnectScooter()">DISCONNECT</button>
 <div class="muted" id="connectionInfo">Noch nicht verbunden</div>
 </div>
@@ -68,41 +67,70 @@ button:disabled{opacity:.4}
 <div class="label">VEHICLE CONTROL</div>
 <button disabled>🔒 LOCK – NOCH NICHT VERIFIZIERT</button>
 <button disabled>🔓 UNLOCK – NOCH NICHT VERIFIZIERT</button>
-<div class="muted">Steuerung bleibt deaktiviert, bis das GT3-Protokoll sicher bestätigt ist.</div>
+<div class="muted">Steuerung bleibt deaktiviert, bis das Protokoll bestätigt ist.</div>
 </div>
 
 <div class="card">
 <div class="label">BLE DIAGNOSTICS</div>
 <div id="debug">Bereit.</div>
+<button onclick="copyLog()">LOG KOPIEREN</button>
 </div>
 
 <script>
 "use strict";
 
-const SERVICE_UUID =
-"0000d0ff-3c17-d293-8e48-14fe2e4da212";
+// Web Bluetooth darf nur Services lesen, die vorher hier gelistet sind.
+// Darum: viele gängige Scooter-/Modul-UUIDs eintragen.
+const SHORT_IDS = [
+  0xd0ff, 0xfee7, 0xffe0, 0xffe5, 0xfff0, 0xff00, 0xffd0, 0xfe00,
+  0xfd00, 0xae00, 0xb000, 0xa000, 0xabf0, 0xfff1, 0xff10,
+  0x180a, 0x180f, 0x1800, 0x1801
+];
 
-const RX_UUID =
-"0000b003-0000-1000-8000-00805f9b34fb";
+const EXTRA_UUIDS = [
+  "0000d0ff-3c17-d293-8e48-14fe2e4da212", // aus deinem alten Code
+  "6e400001-b5a3-f393-e0a9-e50e24dcca9e", // Nordic UART
+  "0000fff0-0000-1000-8000-00805f9b34fb",
+  "0000ffe0-0000-1000-8000-00805f9b34fb"
+];
 
-const TX_UUID =
-"0000b002-0000-1000-8000-00805f9b34fb";
+const OPTIONAL_SERVICES = [
+  ...new Set([
+    ...SHORT_IDS.map(id => BluetoothUUID.canonicalUUID(id)),
+    ...EXTRA_UUIDS
+  ])
+];
 
 let device = null;
 let server = null;
-let rxCharacteristic = null;
-let txCharacteristic = null;
 
 const $ = id => document.getElementById(id);
 
 function log(message) {
-  $("debug").textContent += "\n" + message;
+  const el = $("debug");
+  el.textContent += "\n" + message;
+  el.scrollTop = el.scrollHeight;
+}
+
+function copyLog() {
+  const text = $("debug").textContent;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text)
+      .then(() => log("[Log kopiert]"))
+      .catch(() => log("[Kopieren nicht erlaubt – bitte Screenshot machen]"));
+  }
 }
 
 function setStatus(message, online = false) {
   $("status").textContent = online ? "● CONNECTED" : "● OFFLINE";
   $("status").style.color = online ? "#36e68b" : "#ff5252";
   $("connectionInfo").textContent = message;
+}
+
+function toHex(data) {
+  return Array.from(
+    new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  ).map(b => b.toString(16).padStart(2, "0")).join(" ");
 }
 
 async function connectScooter() {
@@ -117,28 +145,22 @@ async function connectScooter() {
   $("debug").textContent = "Starte Bluetooth-Suche...";
 
   try {
+    // Kein Namensfilter: der Scooter heißt evtl. nicht "NAVEE..."
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: "NAVEE" }],
-      optionalServices: [
-        SERVICE_UUID,
-        "battery_service"
-      ]
+      acceptAllDevices: true,
+      optionalServices: OPTIONAL_SERVICES
     });
 
-    device.addEventListener(
-      "gattserverdisconnected",
-      onDisconnected
-    );
-
-    $("deviceName").textContent = device.name || "NAVEE";
+    log("Gerät gewählt: " + (device.name || "(ohne Name)") + " | id: " + device.id);
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    $("deviceName").textContent = device.name || "BLE-Gerät";
     $("connectionInfo").textContent = "Verbinde...";
 
     server = await device.gatt.connect();
-
     setStatus("Bluetooth verbunden", true);
     log("GATT-Verbindung erfolgreich.");
 
-    await discoverServices();
+    await discoverAll();
 
   } catch (error) {
     log("FEHLER: " + error.name + ": " + error.message);
@@ -148,120 +170,85 @@ async function connectScooter() {
   }
 }
 
-async function discoverServices() {
-  log("Suche NAVEE-Dienst...");
+async function discoverAll() {
+  let services = [];
 
   try {
-    const service = await server.getPrimaryService(SERVICE_UUID);
-
-    log("NAVEE SERVICE: " + service.uuid);
-
-    const characteristics =
-      await service.getCharacteristics();
-
-    for (const characteristic of characteristics) {
-      const uuid = characteristic.uuid;
-
-      log(
-        "CHAR: " + uuid +
-        " | READ: " + characteristic.properties.read +
-        " | NOTIFY: " + characteristic.properties.notify +
-        " | WRITE: " + characteristic.properties.write
-      );
-
-      if (uuid === RX_UUID) {
-        rxCharacteristic = characteristic;
-
-        if (characteristic.properties.notify) {
-          await characteristic.startNotifications();
-
-          characteristic.addEventListener(
-            "characteristicvaluechanged",
-            handleNotification
-          );
-
-          log("Empfang B003 aktiviert.");
-        }
-      }
-
-      if (uuid === TX_UUID) {
-        txCharacteristic = characteristic;
-        log("Sende-Characteristic B002 erkannt.");
-      }
-
-      if (characteristic.properties.read) {
-        try {
-          const data = await characteristic.readValue();
-          log("READ " + uuid + ": " + toHex(data));
-        } catch (error) {
-          log("READ FEHLER: " + error.message);
-        }
-      }
-    }
-
-    if (!rxCharacteristic) {
-      log("B003 nicht gefunden.");
-    }
-
-    if (!txCharacteristic) {
-      log("B002 nicht gefunden.");
-    }
-
-    await readBatteryService();
-
+    services = await server.getPrimaryServices();
   } catch (error) {
-    log("GATT-DIAGNOSE: " + error.message);
+    log("Services holen fehlgeschlagen: " + error.message);
   }
-}
 
-async function readBatteryService() {
+  log("Gefundene Services: " + services.length);
+
+  if (services.length === 0) {
+    log("→ Keine erlaubten Services. Entweder ist die Service-UUID nicht in der Liste, oder die NAVEE-App blockiert die Verbindung.");
+    return;
+  }
+
+  for (const service of services) {
+    log("\nSERVICE: " + service.uuid);
+
+    let chars = [];
+    try {
+      chars = await service.getCharacteristics();
+    } catch (error) {
+      log("  Characteristics-Fehler: " + error.message);
+      continue;
+    }
+
+    for (const c of chars) {
+      const p = c.properties;
+      const flags = [
+        p.read && "READ",
+        p.write && "WRITE",
+        p.writeWithoutResponse && "WRITE-NR",
+        p.notify && "NOTIFY",
+        p.indicate && "INDICATE"
+      ].filter(Boolean).join(",");
+
+      log("  CHAR: " + c.uuid + " [" + flags + "]");
+
+      if (p.read) {
+        try {
+          const data = await c.readValue();
+          log("    READ: " + toHex(data));
+        } catch (error) {
+          log("    READ-Fehler: " + error.message);
+        }
+      }
+
+      if (p.notify || p.indicate) {
+        try {
+          c.addEventListener("characteristicvaluechanged", e => {
+            log("RX " + c.uuid.slice(4, 8) + ": " + toHex(e.target.value));
+          });
+          await c.startNotifications();
+          log("    Notifications AN");
+        } catch (error) {
+          log("    Notify-Fehler: " + error.message);
+        }
+      }
+    }
+  }
+
+  // Standard-Akkuanzeige, falls vorhanden
   try {
-    const service =
-      await server.getPrimaryService("battery_service");
-
-    const characteristic =
-      await service.getCharacteristic("battery_level");
-
-    const data = await characteristic.readValue();
-    const level = data.getUint8(0);
-
+    const bs = await server.getPrimaryService("battery_service");
+    const bc = await bs.getCharacteristic("battery_level");
+    const level = (await bc.readValue()).getUint8(0);
     $("battery").textContent = level;
     $("batteryFill").style.width = level + "%";
-
-    log("Standard-Batteriedienst: " + level + "%");
-
-  } catch (error) {
-    log("Kein lesbarer Standard-Batteriedienst.");
+    log("\nStandard-Akku: " + level + "%");
+  } catch (e) {
+    log("\nKein Standard-Batteriedienst.");
   }
-}
 
-function handleNotification(event) {
-  const data = event.target.value;
-
-  log("NAVEE RX: " + toHex(data));
-
-  // Rohdaten werden protokolliert.
-  // Erst nach bestätigter Protokollauswertung
-  // werden daraus Geschwindigkeit, Akku und Watt.
-}
-
-function toHex(data) {
-  return Array.from(
-    new Uint8Array(
-      data.buffer,
-      data.byteOffset,
-      data.byteLength
-    )
-  ).map(byte =>
-    byte.toString(16).padStart(2, "0")
-  ).join(" ");
+  log("\nFertig. Jetzt Scooter bewegen/Gas geben und schauen, ob RX-Zeilen kommen.");
 }
 
 function onDisconnected() {
   server = null;
-  rxCharacteristic = null;
-  txCharacteristic = null;
-
   setStatus("Bluetooth getrennt");
   $("deviceName").textContent = "NAVEE GT3";
   log("Verbindung getrennt.");
